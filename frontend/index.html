@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Photo Album Search</title>
+</head>
+<body>
+  <h1>Photo Album Search</h1>
+
+  <h2>Search Photos</h2>
+  <input id="searchBox" placeholder="Search labels, e.g. testlabel">
+  <button onclick="searchPhotos()">Search</button>
+
+  <div id="results"></div>
+
+  <hr>
+
+  <h2>Upload Photo</h2>
+  <input type="file" id="photoInput">
+  <br><br>
+  <input id="labelsInput" placeholder="Custom labels, e.g. testlabel,yuyang">
+  <button onclick="uploadPhoto()">Upload</button>
+
+  <p id="uploadStatus"></p>
+
+  <script>
+    const API_BASE = "https://pu1pei01w5.execute-api.us-east-1.amazonaws.com/dev";
+    const API_KEY = "obsM3UtDOt28TvaG7EPNq9ibD5GuyNJo8fwLK5xt";
+
+    async function searchPhotos() {
+      const query = document.getElementById("searchBox").value;
+      const res = await fetch(`${API_BASE}/search?q=${encodeURIComponent(query)}`, {
+        headers: {
+          "x-api-key": API_KEY
+        }
+      });
+      const data = await res.json();
+
+      const resultsDiv = document.getElementById("results");
+      resultsDiv.innerHTML = "";
+
+      data.results.forEach(item => {
+        const img = document.createElement("img");
+        img.src = item.url;
+        img.width = 250;
+        img.style.margin = "10px";
+
+        const p = document.createElement("p");
+        p.innerText = "Labels: " + item.labels.join(", ");
+
+        resultsDiv.appendChild(img);
+        resultsDiv.appendChild(p);
+      });
+    }
+
+    async function uploadPhoto() {
+      const fileInput = document.getElementById("photoInput");
+      const labels = document.getElementById("labelsInput").value;
+      const file = fileInput.files[0];
+
+      if (!file) {
+        alert("Please choose a file first.");
+        return;
+      }
+
+      const uploadUrl = `${API_BASE}/photos/${encodeURIComponent(file.name)}`;
+
+      const res = await fetch(uploadUrl, {
+        method: "PUT",
+        headers: {
+          "Content-Type": file.type,
+          "x-amz-meta-customLabels": labels,
+          "x-api-key": API_KEY
+        },
+        body: file
+      });
+
+      if (res.ok) {
+        document.getElementById("uploadStatus").innerText = "Upload successful. Wait a few seconds, then search your label.";
+      } else {
+        document.getElementById("uploadStatus").innerText = "Upload failed.";
+      }
+    }
+  </script>
+</body>
+</html>
