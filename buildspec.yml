@@ -1,0 +1,8 @@
+version: 0.2
+phases:
+  build:
+    commands:
+      - cd backend/index-photos && zip -r index-photos.zip lambda_function.py
+      - cd ../../backend/search-photos && zip -r search-photos.zip lambda_function.py
+      - aws lambda update-function-code --function-name index-photos --zip-file fileb://backend/index-photos/index-photos.zip --region us-east-1
+      - aws lambda update-function-code --function-name search-photos --zip-file fileb://backend/search-photos/search-photos.zip --region us-east-1
