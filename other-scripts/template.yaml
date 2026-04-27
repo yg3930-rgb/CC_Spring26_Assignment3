@@ -1,0 +1,225 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Photo Album Application Stack - CC Spring 2026 Assignment 3
+
+Resources:
+
+  # S3 Bucket for storing photos (B2)
+  PhotoStorageBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: yg3930-photo-storage-cf
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - '*'
+            AllowedMethods:
+              - GET
+              - PUT
+              - HEAD
+            AllowedOrigins:
+              - '*'
+
+  # S3 Bucket for frontend (B1)
+  PhotoFrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: yg3930-photo-frontend-cf
+      WebsiteConfiguration:
+        IndexDocument: index.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+
+  # Bucket policy to make frontend public
+  PhotoFrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref PhotoFrontendBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: s3:GetObject
+            Resource: !Sub 'arn:aws:s3:::yg3930-photo-frontend-cf/*'
+
+  # IAM Role for Lambda functions
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: lambda-photo-role-cf
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+                - apigateway.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/AmazonRekognitionFullAccess
+        - arn:aws:iam::aws:policy/AmazonOpenSearchServiceFullAccess
+        - arn:aws:iam::aws:policy/AmazonLexFullAccess
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+
+  # Lambda function: index-photos (LF1)
+  IndexPhotosFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: index-photos-cf
+      Runtime: python3.10
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import urllib.parse
+
+          def lambda_handler(event, context):
+              print("EVENT:", json.dumps(event))
+              return {
+                  "statusCode": 200,
+                  "body": json.dumps("Placeholder - deploy real code via CodePipeline")
+              }
+
+  # Lambda function: search-photos (LF2)
+  SearchPhotosFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: search-photos-cf
+      Runtime: python3.10
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      Code:
+        ZipFile: |
+          import json
+
+          def lambda_handler(event, context):
+              print("EVENT:", json.dumps(event))
+              return {
+                  "statusCode": 200,
+                  "headers": {
+                      "Access-Control-Allow-Origin": "*"
+                  },
+                  "body": json.dumps({"results": []})
+              }
+
+  # API Gateway
+  PhotoSearchApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: photo-search-api-cf
+      Description: Photo Search API
+
+  # /photos resource
+  PhotosResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref PhotoSearchApi
+      ParentId: !GetAtt PhotoSearchApi.RootResourceId
+      PathPart: photos
+
+  # /photos/{object} resource
+  PhotoObjectResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref PhotoSearchApi
+      ParentId: !Ref PhotosResource
+      PathPart: '{object}'
+
+  # /search resource
+  SearchResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref PhotoSearchApi
+      ParentId: !GetAtt PhotoSearchApi.RootResourceId
+      PathPart: search
+
+  # GET /search method
+  SearchGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref PhotoSearchApi
+      ResourceId: !Ref SearchResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+          - LambdaArn: !GetAtt SearchPhotosFunction.Arn
+
+  # PUT /photos/{object} method
+  PhotoPutMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref PhotoSearchApi
+      ResourceId: !Ref PhotoObjectResource
+      HttpMethod: PUT
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: PUT
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:s3:path/yg3930-photo-storage/{object}'
+        Credentials: !GetAtt LambdaExecutionRole.Arn
+        RequestParameters:
+          integration.request.path.object: method.request.path.object
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      RequestParameters:
+        method.request.path.object: true
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # API Gateway Deployment
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - SearchGetMethod
+      - PhotoPutMethod
+    Properties:
+      RestApiId: !Ref PhotoSearchApi
+      StageName: dev
+
+  # Lambda permission for API Gateway to invoke search-photos
+  SearchLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt SearchPhotosFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${PhotoSearchApi}/*'
+
+Outputs:
+  FrontendURL:
+    Description: URL of the frontend S3 website
+    Value: !Sub 'http://yg3930-photo-frontend-cf.s3-website-${AWS::Region}.amazonaws.com'
+
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${PhotoSearchApi}.execute-api.${AWS::Region}.amazonaws.com/dev'
+
+  PhotoStorageBucketName:
+    Description: Name of the photo storage bucket
+    Value: !Ref PhotoStorageBucket
+
+  IndexPhotosFunctionArn:
+    Description: ARN of index-photos Lambda
+    Value: !GetAtt IndexPhotosFunction.Arn
+
+  SearchPhotosFunctionArn:
+    Description: ARN of search-photos Lambda
+    Value: !GetAtt SearchPhotosFunction.Arn
